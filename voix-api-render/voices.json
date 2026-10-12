@@ -1,0 +1,19 @@
+[
+  {
+    "id": "camille",
+    "name": "Camille",
+    "gender": "femme",
+    "lang": "fr-FR",
+    "model": "fr_FR-siwis-medium",
+    "description": "Voix féminine claire et posée, bonne voix par défaut."
+  },
+  {
+    "id": "pierre",
+    "name": "Pierre",
+    "gender": "homme",
+    "lang": "fr-FR",
+    "model": "fr_FR-upmc-medium",
+    "speaker": "pierre",
+    "description": "Voix masculine posée."
+  }
+]

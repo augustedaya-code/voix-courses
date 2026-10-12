@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio Voix</title>
+<style>
+  :root {
+    --bg: #f6f4ef; --card: #ffffff; --ink: #1d1b16; --muted: #6b665c;
+    --line: #e4dfd4; --accent: #1f7a4d; --accent-ink: #ffffff; --err: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15140f; --card: #1f1d17; --ink: #f1ede4; --muted: #a39d90;
+            --line: #34312a; --accent: #4fbf86; --accent-ink: #0d1a12; --err: #ff8a80; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; margin-bottom: 16px; }
+  label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+  textarea, input, select { width: 100%; font: inherit; color: inherit; background: var(--bg);
+         border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  textarea { min-height: 110px; resize: vertical; }
+  .count { color: var(--muted); font-size: 13px; text-align: right; margin-top: 4px; }
+  .voices { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+  .voice { text-align: left; background: var(--bg); color: inherit; border: 1.5px solid var(--line);
+           border-radius: 12px; padding: 12px; cursor: pointer; font: inherit;
+           display: flex; flex-direction: column; justify-content: flex-start; }
+  .voice[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }
+  .voice b { display: block; }
+  .voice small { color: var(--muted); font-size: 12px; }
+  .row { display: flex; gap: 16px; align-items: end; flex-wrap: wrap; }
+  .row > div { flex: 1 1 180px; }
+  button.go { background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 10px;
+              padding: 12px 22px; font: inherit; font-weight: 700; cursor: pointer; }
+  button.go:disabled { opacity: .6; cursor: wait; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .chip { background: transparent; border: 1px solid var(--line); color: var(--muted); border-radius: 999px;
+          padding: 4px 10px; font: inherit; font-size: 13px; cursor: pointer; }
+  audio { width: 100%; margin-top: 14px; }
+  .status { font-size: 14px; color: var(--muted); margin-top: 8px; min-height: 1.5em; }
+  .status.err { color: var(--err); }
+  details summary { cursor: pointer; font-weight: 600; }
+  code { font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Studio Voix</h1>
+  <p class="sub">Teste les voix de ton assistante de courses avant de les brancher dans l'application.</p>
+
+  <div class="card">
+    <label for="text">Texte à dire</label>
+    <textarea id="text" maxlength="600">C'est noté ! J'ai ajouté 2 kg de pommes et 1 L de lait à ta liste. Total estimé : 6,40 €.</textarea>
+    <div class="count"><span id="count">0</span> / 600</div>
+    <div class="chips" id="examples"></div>
+  </div>
+
+  <div class="card">
+    <label>Voix</label>
+    <div class="voices" id="voices"><small>Chargement…</small></div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <label for="speed">Vitesse : <span id="speedVal">1.0</span>×</label>
+        <input id="speed" type="range" min="0.5" max="2" step="0.1" value="1" style="padding:0">
+      </div>
+      <div>
+        <label for="key">Clé d'API</label>
+        <input id="key" type="password" placeholder="si l'API est protégée">
+      </div>
+      <div style="flex:0 0 auto">
+        <button class="go" id="go">Écouter</button>
+      </div>
+    </div>
+    <audio id="player" controls hidden></audio>
+    <div class="status" id="status"></div>
+  </div>
+
+  <details class="card">
+    <summary>Appeler l'API depuis ton application</summary>
+    <pre><code id="snippet"></code></pre>
+  </details>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
+  let selected = null;
+
+  const examples = [
+    "Bonjour ! Qu'est-ce qu'on achète aujourd'hui ?",
+    "J'ai trouvé 3 promotions sur tes produits habituels.",
+    "Il te manque des œufs, du beurre et 500 g de farine.",
+    "Ton panier est prêt : 12 articles pour 34,90 €.",
+  ];
+  for (const e of examples) {
+    const b = document.createElement("button");
+    b.className = "chip"; b.textContent = e;
+    b.onclick = () => { $("text").value = e; updateCount(); };
+    $("examples").append(b);
+  }
+
+  function headers() {
+    const k = $("key").value.trim();
+    return k ? { Authorization: "Bearer " + k } : {};
+  }
+  function updateCount() { $("count").textContent = $("text").value.length; snippet(); }
+  function setStatus(msg, err = false) { $("status").textContent = msg; $("status").className = "status" + (err ? " err" : ""); }
+
+  async function loadVoices() {
+    try {
+      const r = await fetch("/v1/voices", { headers: headers() });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error?.message || r.status);
+      $("voices").innerHTML = "";
+      selected = store.get("voice") || data.default;
+      for (const v of data.voices) {
+        const b = document.createElement("button");
+        b.className = "voice"; b.dataset.id = v.id;
+        b.innerHTML = `<b></b><small></small>`;
+        b.querySelector("b").textContent = v.name;
+        b.querySelector("small").textContent = `${v.gender} · ${v.lang} — ${v.description}`;
+        b.setAttribute("aria-pressed", String(v.id === selected));
+        b.onclick = () => {
+          selected = v.id; store.set("voice", v.id);
+          document.querySelectorAll(".voice").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.id === v.id)));
+          snippet(); speak();
+        };
+        $("voices").append(b);
+      }
+      snippet();
+    } catch (e) {
+      $("voices").innerHTML = "";
+      setStatus("Impossible de charger les voix : " + e.message + " (vérifie la clé d'API)", true);
+    }
+  }
+
+  async function speak() {
+    const text = $("text").value.trim();
+    if (!text) return setStatus("Écris un texte d'abord.", true);
+    $("go").disabled = true; setStatus("Génération…");
+    try {
+      const r = await fetch("/v1/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...headers() },
+        body: JSON.stringify({ text, voice: selected, speed: Number($("speed").value), format: "mp3" }),
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error?.message || "Erreur " + r.status); }
+      const blob = await r.blob();
+      const p = $("player");
+      if (p.src) URL.revokeObjectURL(p.src);
+      p.src = URL.createObjectURL(blob); p.hidden = false; p.play().catch(() => {});
+      const cache = r.headers.get("X-Cache") === "HIT" ? " (depuis le cache)" : "";
+      setStatus(`Prêt en ${r.headers.get("X-Render-Ms")} ms${cache}.`);
+    } catch (e) { setStatus(e.message, true); }
+    finally { $("go").disabled = false; }
+  }
+
+  function snippet() {
+    const body = JSON.stringify({ text: $("text").value.slice(0, 60), voice: selected, speed: Number($("speed").value) });
+    $("snippet").textContent =
+`const res = await fetch("${location.origin}/v1/tts", {
+  method: "POST",
+  headers: { "Content-Type": "application/json", Authorization: "Bearer TA_CLE" },
+  body: JSON.stringify(${body}),
+});
+const audio = await res.blob(); // fichier MP3`;
+  }
+
+  $("text").oninput = updateCount;
+  $("speed").oninput = () => { $("speedVal").textContent = Number($("speed").value).toFixed(1); snippet(); };
+  $("key").value = store.get("key") || "";
+  $("key").onchange = () => { store.set("key", $("key").value.trim()); loadVoices(); };
+  $("go").onclick = speak;
+  updateCount(); loadVoices();
+</script>
+</body>
+</html>
